@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.24)
 
 project(basalt)
 
+option(BASALT_COMPILE_CKAAR_STRIPPED "Build stripped-down basalt library" ON)
+
 # Configure CCache if available
 if (NOT CMAKE_C_COMPILER_LAUNCHER AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
   find_program(CCACHE_PROGRAM ccache)
@@ -167,26 +169,44 @@ endif()
 
 set(CMAKE_CXX_FLAGS "${BASALT_CXX_FLAGS} ${BASALT_MARCH_FLAGS} ${BASALT_PASSED_CXX_FLAGS}")
 
-find_package(Eigen3 CONFIG REQUIRED)
+if(NOT TARGET Eigen3::Eigen)
+  find_package(Eigen3 CONFIG REQUIRED)
+endif()
 find_package(TBB CONFIG REQUIRED)
 find_package(OpenCV CONFIG REQUIRED COMPONENTS core imgproc calib3d features2d imgcodecs)
-file(GLOB BASALT_VCPKG_BOOST_CONFIG "${CMAKE_BINARY_DIR}/vcpkg_installed/*/share/boost/BoostConfig.cmake")
-if(BASALT_VCPKG_BOOST_CONFIG)
-  list(GET BASALT_VCPKG_BOOST_CONFIG 0 BASALT_VCPKG_BOOST_CONFIG)
-  get_filename_component(BASALT_VCPKG_BOOST_DIR "${BASALT_VCPKG_BOOST_CONFIG}" DIRECTORY)
-  set(Boost_DIR "${BASALT_VCPKG_BOOST_DIR}" CACHE PATH "Boost config directory" FORCE)
+if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
+  file(GLOB BASALT_VCPKG_BOOST_CONFIG "${CMAKE_BINARY_DIR}/vcpkg_installed/*/share/boost/BoostConfig.cmake")
+  if(BASALT_VCPKG_BOOST_CONFIG)
+    list(GET BASALT_VCPKG_BOOST_CONFIG 0 BASALT_VCPKG_BOOST_CONFIG)
+    get_filename_component(BASALT_VCPKG_BOOST_DIR "${BASALT_VCPKG_BOOST_CONFIG}" DIRECTORY)
+    set(Boost_DIR "${BASALT_VCPKG_BOOST_DIR}" CACHE PATH "Boost config directory" FORCE)
+  endif()
+  find_package(Boost CONFIG REQUIRED COMPONENTS date_time filesystem format program_options regex thread)
 endif()
-find_package(Boost CONFIG REQUIRED COMPONENTS date_time filesystem format program_options regex thread)
-find_package(lz4 CONFIG REQUIRED)
-find_package(fmt CONFIG REQUIRED)
+if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
+  find_package(lz4 CONFIG REQUIRED)
+endif()
+if(NOT TARGET fmt::fmt)
+  find_package(fmt CONFIG REQUIRED)
+endif()
+if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
 find_package(CLI11 CONFIG REQUIRED)
+endif()
 find_package(magic_enum CONFIG REQUIRED)
-find_package(nlohmann_json CONFIG REQUIRED)
+if(NOT TARGET nlohmann_json::nlohmann_json)
+  find_package(nlohmann_json CONFIG REQUIRED)
+endif()
 find_package(opengv CONFIG REQUIRED)
-find_package(rosbag CONFIG REQUIRED)
-find_package(Pangolin CONFIG REQUIRED)
+if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
+  find_package(rosbag CONFIG REQUIRED)
+endif()
+if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
+  find_package(Pangolin CONFIG REQUIRED)
+endif()
 find_package(basalt-headers CONFIG REQUIRED)
-find_package(GTest CONFIG REQUIRED)
+if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
+  find_package(GTest CONFIG REQUIRED)
+endif()
 
 get_target_property(BASALT_EIGEN_INCLUDE_DIRS Eigen3::Eigen INTERFACE_INCLUDE_DIRECTORIES)
 if(NOT BASALT_EIGEN_INCLUDE_DIRS)
@@ -221,9 +241,15 @@ function(basalt_normalize_eigen_includes target_name)
   endif()
 endfunction()
 
-foreach(_target opengv basalt::basalt-headers ${BASALT_PANGO_TARGETS})
-  basalt_normalize_eigen_includes(${_target})
-endforeach()
+if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
+  foreach(_target opengv basalt::basalt-headers ${BASALT_PANGO_TARGETS})
+    basalt_normalize_eigen_includes(${_target})
+  endforeach()
+else()
+  foreach(_target opengv basalt::basalt-headers)
+    basalt_normalize_eigen_includes(${_target})
+  endforeach()
+endif()
 
 add_library(basalt::opencv INTERFACE IMPORTED)
 set_property(TARGET basalt::opencv PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${OpenCV_INCLUDE_DIRS})
@@ -232,15 +258,21 @@ set_property(TARGET basalt::opencv PROPERTY INTERFACE_LINK_LIBRARIES ${OpenCV_LI
 # Build bundled apriltag library (needs basalt::opencv above)
 add_subdirectory(thirdparty/apriltag EXCLUDE_FROM_ALL)
 
-add_library(basalt::cli11 INTERFACE IMPORTED)
-set_property(TARGET basalt::cli11 PROPERTY INTERFACE_LINK_LIBRARIES CLI11::CLI11)
+if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
+  add_library(basalt::cli11 INTERFACE IMPORTED)
+  set_property(TARGET basalt::cli11 PROPERTY INTERFACE_LINK_LIBRARIES CLI11::CLI11)
+endif()
 
 add_library(basalt::magic_enum INTERFACE IMPORTED)
 set_property(TARGET basalt::magic_enum PROPERTY INTERFACE_LINK_LIBRARIES magic_enum::magic_enum)
 
-set(BASALT_PANGO_TARGETS ${Pangolin_LIBRARIES})
+if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
+  set(BASALT_PANGO_TARGETS ${Pangolin_LIBRARIES})
+endif()
 
-enable_testing()
+if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
+  enable_testing()
+endif()
 
 # main library
 if(BASALT_BUILD_SHARED_LIB)
@@ -261,19 +293,8 @@ install(TARGETS basalt
 # To support cmake < 3.13, use absolute paths (see: https://crascit.com/2016/01/31/enhanced-source-file-handling-with-target_sources/)
 target_sources(basalt
   PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/calibration/aprilgrid.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/calibration/calibration_helper.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/calibration/cam_calib.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/calibration/cam_imu_calib.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/calibration/vignette.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/device/rs_t265.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/hash_bow/hash_bow.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io_euroc.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io_kitti.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io_rosbag.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io_uzh.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/marg_data_io.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/linearization/block_diagonal.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/linearization/imu_block.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/linearization/landmark_block.hpp
@@ -320,11 +341,7 @@ target_sources(basalt
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/vi_estimator/sqrt_keypoint_vo.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/vi_estimator/vio_estimator.h
   PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/calibration/aprilgrid.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/calibration/calibraiton_helper.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/calibration/vignette.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/dataset_io.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/marg_data_io.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/linearization/landmark_block.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/linearization/linearization_abs_qr.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/linearization/linearization_abs_sc.cpp
@@ -346,133 +363,167 @@ target_sources(basalt
     ${CMAKE_CURRENT_SOURCE_DIR}/src/vi_estimator/vio_estimator.cpp
 )
 
+if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
+  target_sources(basalt
+    PUBLIC
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/calibration/aprilgrid.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/calibration/calibration_helper.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/calibration/cam_calib.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/calibration/cam_imu_calib.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/device/rs_t265.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io_euroc.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io_kitti.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io_rosbag.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io_uzh.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/marg_data_io.h
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/calibration/aprilgrid.cpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/calibration/calibraiton_helper.cpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/io/dataset_io.cpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/io/marg_data_io.cpp
+  )
+endif()
+
 target_link_libraries(basalt
   PUBLIC ${STD_CXX_FS} Eigen3::Eigen basalt::opencv basalt::basalt-headers TBB::tbb
-  PRIVATE basalt::magic_enum rosbag apriltag opengv nlohmann_json::nlohmann_json fmt::fmt)
+  PRIVATE basalt::magic_enum apriltag opengv nlohmann_json::nlohmann_json fmt::fmt)
+if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
+  target_link_libraries(basalt PRIVATE rosbag)
+endif()
+
 target_include_directories(basalt PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/ros/include)
+  ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
+  target_include_directories(basalt PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/ros/include)
+endif()
 target_compile_definitions(basalt PUBLIC ${BASALT_COMPILE_DEFINITIONS})
 #target_compile_definitions(basalt PUBLIC BASALT_DISABLE_ASSERTS)
 
-add_executable(basalt_calibrate src/calibrate.cpp src/calibration/cam_calib.cpp)
-target_link_libraries(basalt_calibrate basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
-basalt_add_gui_link_options(basalt_calibrate)
-basalt_add_macos_runtime_paths(basalt_calibrate)
+if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
+  add_executable(basalt_calibrate src/calibrate.cpp src/calibration/cam_calib.cpp)
+  target_link_libraries(basalt_calibrate basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
+  basalt_add_gui_link_options(basalt_calibrate)
+  basalt_add_macos_runtime_paths(basalt_calibrate)
 
-add_executable(basalt_calibrate_imu src/calibrate_imu.cpp src/calibration/cam_imu_calib.cpp)
-target_link_libraries(basalt_calibrate_imu basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
-basalt_add_gui_link_options(basalt_calibrate_imu)
-basalt_add_macos_runtime_paths(basalt_calibrate_imu)
+  add_executable(basalt_calibrate_imu src/calibrate_imu.cpp src/calibration/cam_imu_calib.cpp)
+  target_link_libraries(basalt_calibrate_imu basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
+  basalt_add_gui_link_options(basalt_calibrate_imu)
+  basalt_add_macos_runtime_paths(basalt_calibrate_imu)
 
+  add_executable(basalt_vio_sim src/vio_sim.cpp)
+  target_link_libraries(basalt_vio_sim basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
+  basalt_add_gui_link_options(basalt_vio_sim)
+  basalt_add_macos_runtime_paths(basalt_vio_sim)
 
-add_executable(basalt_vio_sim src/vio_sim.cpp)
-target_link_libraries(basalt_vio_sim basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
-basalt_add_gui_link_options(basalt_vio_sim)
-basalt_add_macos_runtime_paths(basalt_vio_sim)
+  add_executable(basalt_mapper_sim src/mapper_sim.cpp)
+  target_link_libraries(basalt_mapper_sim basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
+  basalt_add_gui_link_options(basalt_mapper_sim)
+  basalt_add_macos_runtime_paths(basalt_mapper_sim)
 
-add_executable(basalt_mapper_sim src/mapper_sim.cpp)
-target_link_libraries(basalt_mapper_sim basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
-basalt_add_gui_link_options(basalt_mapper_sim)
-basalt_add_macos_runtime_paths(basalt_mapper_sim)
-
-# mapper sim native doesn't use template free interface
-if(BASALT_INSTANTIATIONS_DOUBLE)
-  add_executable(basalt_mapper_sim_naive src/mapper_sim_naive.cpp)
-  target_link_libraries(basalt_mapper_sim_naive basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
-  basalt_add_gui_link_options(basalt_mapper_sim_naive)
-  basalt_add_macos_runtime_paths(basalt_mapper_sim_naive)
-endif()
-
-add_executable(basalt_mapper src/mapper.cpp)
-target_link_libraries(basalt_mapper basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
-basalt_add_gui_link_options(basalt_mapper)
-basalt_add_macos_runtime_paths(basalt_mapper)
-
-
-add_executable(basalt_opt_flow src/opt_flow.cpp)
-target_link_libraries(basalt_opt_flow basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
-basalt_add_gui_link_options(basalt_opt_flow)
-basalt_add_macos_runtime_paths(basalt_opt_flow)
-
-add_executable(basalt_vio src/vio.cpp)
-target_link_libraries(basalt_vio basalt ${BASALT_PANGO_TARGETS} basalt::cli11 fmt::fmt)
-basalt_add_gui_link_options(basalt_vio)
-basalt_add_macos_runtime_paths(basalt_vio)
-
-add_executable(basalt_time_alignment src/time_alignment.cpp)
-target_link_libraries(basalt_time_alignment basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
-basalt_add_gui_link_options(basalt_time_alignment)
-basalt_add_macos_runtime_paths(basalt_time_alignment)
-
-add_executable(basalt_kitti_eval src/kitti_eval.cpp)
-target_link_libraries(basalt_kitti_eval basalt::basalt-headers basalt::cli11)
-basalt_add_static_link_options(basalt_kitti_eval)
-basalt_add_macos_runtime_paths(basalt_kitti_eval)
-
-find_package(realsense2 QUIET)
-if(realsense2_FOUND)
-  add_executable(basalt_rs_t265_record src/rs_t265_record.cpp src/device/rs_t265.cpp)
-  target_link_libraries(basalt_rs_t265_record basalt realsense2::realsense2 ${BASALT_PANGO_TARGETS} basalt::cli11)
-  basalt_add_gui_link_options(basalt_rs_t265_record)
-  basalt_add_macos_runtime_paths(basalt_rs_t265_record)
-
-  add_executable(basalt_rs_t265_vio src/rs_t265_vio.cpp src/device/rs_t265.cpp)
-  target_link_libraries(basalt_rs_t265_vio basalt realsense2::realsense2 ${BASALT_PANGO_TARGETS} basalt::cli11)
-  basalt_add_gui_link_options(basalt_rs_t265_vio)
-  basalt_add_macos_runtime_paths(basalt_rs_t265_vio)
-
-  # librealsense-file and rosbag both provide overlapping rosbag symbols.
-  # Keep this relaxation local to the two T265 tools.
-  if(UNIX AND NOT APPLE)
-    find_library(UDEV_LIB udev REQUIRED)
-    target_link_libraries(basalt_rs_t265_record "${UDEV_LIB}")
-    target_link_libraries(basalt_rs_t265_vio "${UDEV_LIB}")
-    target_link_options(basalt_rs_t265_record PRIVATE "LINKER:--allow-multiple-definition")
-    target_link_options(basalt_rs_t265_vio PRIVATE "LINKER:--allow-multiple-definition")
-  elseif(APPLE)
-    find_library(SECURITY_FRAMEWORK Security REQUIRED)
-    target_link_libraries(basalt_rs_t265_record "${SECURITY_FRAMEWORK}")
-    target_link_libraries(basalt_rs_t265_vio "${SECURITY_FRAMEWORK}")
-    target_link_options(basalt_rs_t265_record PRIVATE "LINKER:-ld_classic")
-    target_link_options(basalt_rs_t265_vio PRIVATE "LINKER:-ld_classic")
-    target_link_options(basalt_rs_t265_record PRIVATE "LINKER:-multiply_defined,suppress")
-    target_link_options(basalt_rs_t265_vio PRIVATE "LINKER:-multiply_defined,suppress")
+  # mapper sim native doesn't use template free interface
+  if(BASALT_INSTANTIATIONS_DOUBLE)
+    add_executable(basalt_mapper_sim_naive src/mapper_sim_naive.cpp)
+    target_link_libraries(basalt_mapper_sim_naive basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
+    basalt_add_gui_link_options(basalt_mapper_sim_naive)
+    basalt_add_macos_runtime_paths(basalt_mapper_sim_naive)
   endif()
-endif()
+
+  add_executable(basalt_mapper src/mapper.cpp)
+  target_link_libraries(basalt_mapper basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
+  basalt_add_gui_link_options(basalt_mapper)
+  basalt_add_macos_runtime_paths(basalt_mapper)
+
+  add_executable(basalt_opt_flow src/opt_flow.cpp)
+  target_link_libraries(basalt_opt_flow basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
+  basalt_add_gui_link_options(basalt_opt_flow)
+  basalt_add_macos_runtime_paths(basalt_opt_flow)
+
+  add_executable(basalt_vio src/vio.cpp)
+  target_link_libraries(basalt_vio basalt ${BASALT_PANGO_TARGETS} basalt::cli11 fmt::fmt)
+  basalt_add_gui_link_options(basalt_vio)
+  basalt_add_macos_runtime_paths(basalt_vio)
+
+  add_executable(basalt_time_alignment src/time_alignment.cpp)
+  target_link_libraries(basalt_time_alignment basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
+  basalt_add_gui_link_options(basalt_time_alignment)
+  basalt_add_macos_runtime_paths(basalt_time_alignment)
+
+  add_executable(basalt_kitti_eval src/kitti_eval.cpp)
+  target_link_libraries(basalt_kitti_eval basalt::basalt-headers basalt::cli11)
+  basalt_add_static_link_options(basalt_kitti_eval)
+  basalt_add_macos_runtime_paths(basalt_kitti_eval)
+
+  find_package(realsense2 QUIET)
+  if(realsense2_FOUND)
+    add_executable(basalt_rs_t265_record src/rs_t265_record.cpp src/device/rs_t265.cpp)
+    target_link_libraries(basalt_rs_t265_record basalt realsense2::realsense2 ${BASALT_PANGO_TARGETS} basalt::cli11)
+    basalt_add_gui_link_options(basalt_rs_t265_record)
+    basalt_add_macos_runtime_paths(basalt_rs_t265_record)
+
+    add_executable(basalt_rs_t265_vio src/rs_t265_vio.cpp src/device/rs_t265.cpp)
+    target_link_libraries(basalt_rs_t265_vio basalt realsense2::realsense2 ${BASALT_PANGO_TARGETS} basalt::cli11)
+    basalt_add_gui_link_options(basalt_rs_t265_vio)
+    basalt_add_macos_runtime_paths(basalt_rs_t265_vio)
+
+    # librealsense-file and rosbag both provide overlapping rosbag symbols.
+    # Keep this relaxation local to the two T265 tools.
+    if(UNIX AND NOT APPLE)
+      find_library(UDEV_LIB udev REQUIRED)
+      target_link_libraries(basalt_rs_t265_record "${UDEV_LIB}")
+      target_link_libraries(basalt_rs_t265_vio "${UDEV_LIB}")
+      target_link_options(basalt_rs_t265_record PRIVATE "LINKER:--allow-multiple-definition")
+      target_link_options(basalt_rs_t265_vio PRIVATE "LINKER:--allow-multiple-definition")
+    elseif(APPLE)
+      find_library(SECURITY_FRAMEWORK Security REQUIRED)
+      target_link_libraries(basalt_rs_t265_record "${SECURITY_FRAMEWORK}")
+      target_link_libraries(basalt_rs_t265_vio "${SECURITY_FRAMEWORK}")
+      target_link_options(basalt_rs_t265_record PRIVATE "LINKER:-ld_classic")
+      target_link_options(basalt_rs_t265_vio PRIVATE "LINKER:-ld_classic")
+      target_link_options(basalt_rs_t265_record PRIVATE "LINKER:-multiply_defined,suppress")
+      target_link_options(basalt_rs_t265_vio PRIVATE "LINKER:-multiply_defined,suppress")
+    endif()
+  endif()
+
+  install(TARGETS basalt_calibrate basalt_calibrate_imu basalt_vio_sim basalt_mapper_sim basalt_mapper basalt_opt_flow basalt_vio basalt_kitti_eval basalt_time_alignment basalt
+    EXPORT BasaltTargets
+    RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
+    LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+
+  if(BASALT_INSTANTIATIONS_DOUBLE)
+    install(TARGETS basalt_mapper_sim_naive
+      EXPORT BasaltTargets
+      RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
+      LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
+      ARCHIVE DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+  endif()
+
+  if(realsense2_FOUND)
+      install(TARGETS basalt_rs_t265_record basalt_rs_t265_vio
+        EXPORT BasaltTargets
+        RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
+        LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+  endif()
+
+  file(GLOB SCRIPTS_TO_INSTALL "${CMAKE_CURRENT_SOURCE_DIR}/scripts/basalt_*.py")
+  install(PROGRAMS ${SCRIPTS_TO_INSTALL} DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
+
+  file(GLOB CONFIG_FILES "${CMAKE_CURRENT_SOURCE_DIR}/data/*.json")
+  install(FILES ${CONFIG_FILES}
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/etc/basalt)
+  install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/data/udev"
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/etc/basalt)
 
 
+  add_subdirectory(test)
 
-install(TARGETS basalt_calibrate basalt_calibrate_imu basalt_vio_sim basalt_mapper_sim basalt_mapper basalt_opt_flow basalt_vio basalt_kitti_eval basalt_time_alignment basalt
-  EXPORT BasaltTargets
-  RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
-  LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
-
-if(BASALT_INSTANTIATIONS_DOUBLE)
-  install(TARGETS basalt_mapper_sim_naive
+else()
+  install(TARGETS basalt
     EXPORT BasaltTargets
     RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
     LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
     ARCHIVE DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
 endif()
-
-if(realsense2_FOUND)
-    install(TARGETS basalt_rs_t265_record basalt_rs_t265_vio
-      EXPORT BasaltTargets
-      RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
-      LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
-      ARCHIVE DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
-endif()
-
-file(GLOB SCRIPTS_TO_INSTALL "${CMAKE_CURRENT_SOURCE_DIR}/scripts/basalt_*.py")
-install(PROGRAMS ${SCRIPTS_TO_INSTALL} DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
-
-file(GLOB CONFIG_FILES "${CMAKE_CURRENT_SOURCE_DIR}/data/*.json")
-install(FILES ${CONFIG_FILES}
-  DESTINATION ${CMAKE_INSTALL_PREFIX}/etc/basalt)
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/data/udev"
-  DESTINATION ${CMAKE_INSTALL_PREFIX}/etc/basalt)
-
-
-add_subdirectory(test)
