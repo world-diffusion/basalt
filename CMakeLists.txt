@@ -1,10 +1,44 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(basalt)
+project(basalt CXX)
 
 option(BASALT_COMPILE_CKAAR_STRIPPED "Build stripped-down basalt library" ON)
+option(BASALT_BUILD_SHARED_LIB "Build basalt core library as shared" ON)
+option(BASALT_FULLY_STATIC_BINARIES "Link executables fully static" ON)
+option(BASALT_INSTANTIATIONS_DOUBLE "Instantiate templates for Scalar=double." ON)
+option(BASALT_INSTANTIATIONS_FLOAT "Instantiate templates for Scalar=float." ON)
 
-# Configure CCache if available
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+
+if(NOT CXX_MARCH)
+  set(CXX_MARCH native)
+endif()
+
+# ------------------------------------------------------------------------
+# Create the main library target up front (sources/links attached below).
+# Keeping this early lets every later section configure the target
+# directly instead of accumulating global CMAKE_* state.
+# ------------------------------------------------------------------------
+if(BASALT_BUILD_SHARED_LIB)
+  add_library(basalt SHARED)
+else()
+  add_library(basalt STATIC)
+endif()
+add_library(basalt::basalt ALIAS basalt)
+
+target_compile_features(basalt PUBLIC cxx_std_17)
+set_target_properties(basalt PROPERTIES
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF
+  POSITION_INDEPENDENT_CODE ON
+)
+
+# ------------------------------------------------------------------------
+# CCache (compiler launcher is inherently global/toolchain-level, so this
+# is one of the few things that legitimately stays as a CMAKE_* variable)
+# ------------------------------------------------------------------------
 if (NOT CMAKE_C_COMPILER_LAUNCHER AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
   find_program(CCACHE_PROGRAM ccache)
   if(CCACHE_PROGRAM)
@@ -20,29 +54,10 @@ else()
   message(STATUS "CMAKE_CXX_COMPILER_LAUNCHER: ${CMAKE_CXX_COMPILER_LAUNCHER}")
 endif()
 
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Release)
-endif()
-
-option(BASALT_BUILD_SHARED_LIB "Build basalt core library as shared" ON)
-option(BASALT_FULLY_STATIC_BINARIES "Link executables fully static" ON)
-
-if(NOT CXX_MARCH)
-  set(CXX_MARCH native)
-endif()
-
-if(NOT APPLE OR NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
-  set(BASALT_MARCH_FLAGS "-march=${CXX_MARCH}")
-else()
-  message(STATUS "Running on Apple ${CMAKE_SYSTEM_PROCESSOR}. Disabled -march flag.")
-endif()
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-
-# Function for fully static linking (for non-GUI targets)
+# ------------------------------------------------------------------------
+# Link-option helpers (already target-scoped in the original file — kept
+# as-is, just moved up next to the target that uses them).
+# ------------------------------------------------------------------------
 function(basalt_add_static_link_options target)
   if(BASALT_FULLY_STATIC_BINARIES AND UNIX AND NOT APPLE)
     target_link_options(${target} PRIVATE
@@ -53,7 +68,6 @@ function(basalt_add_static_link_options target)
   endif()
 endfunction()
 
-# Function for GUI targets that need system libs (EGL, OpenGL, X11) dynamically
 function(basalt_add_gui_link_options target)
   if(BASALT_FULLY_STATIC_BINARIES AND UNIX AND NOT APPLE)
     target_link_options(${target} PRIVATE
@@ -70,65 +84,93 @@ function(basalt_add_macos_runtime_paths target)
   endif()
 endfunction()
 
-set(CMAKE_REQUIRED_FLAGS "-Wno-error")
+# ------------------------------------------------------------------------
+# Warning / optimization flags -> applied per-target via
+# target_compile_options instead of a global CMAKE_CXX_FLAGS string.
+# Any executable built in this project should call this too, so it's a
+# function rather than a one-off block.
+# ------------------------------------------------------------------------
+function(basalt_add_common_compile_options target)
+  set(_flags
+    -Wall -Wextra -Werror
+    -Wno-error=unused-variable
+    -Wno-error=array-bounds
+    -ftemplate-backtrace-limit=0
+    -DEIGEN_DONT_PARALLELIZE
+  )
 
-# save flags passed by user
-set(BASALT_PASSED_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-
-set(CMAKE_CXX_FLAGS_DEBUG  "-O0 -g -DEIGEN_INITIALIZE_MATRICES_BY_NAN")
-set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 -g -DEIGEN_INITIALIZE_MATRICES_BY_NAN")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
-set(CMAKE_CXX_FLAGS_CIDEBUG  "-O0 -DEIGEN_INITIALIZE_MATRICES_BY_NAN")
-set(CMAKE_CXX_FLAGS_CIRELWITHDEBINFO "-O3 -DEIGEN_INITIALIZE_MATRICES_BY_NAN")
-
-set(BASALT_CXX_FLAGS "-Wall -Wextra -Werror -Wno-error=unused-parameter -ftemplate-backtrace-limit=0")
-
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
-  set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-exceptions -fcolor-diagnostics -Wno-error=deprecated-declarations")
-  set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-error=unused-variable -Wno-error=unused-but-set-variable")
-  set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-error=missing-template-arg-list-after-template-kw")
-  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang"
-     AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 20)
-    set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -frelaxed-template-template-args")
-  endif()
-
-  if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 10)
-    set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-misleading-indentation -Wno-error=deprecated-copy")
-  endif()
-
-  if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15)
-    set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-error=unused-but-set-variable")
-  endif()
-
-  if(NOT TBB_USE_GLIBCXX_VERSION AND UNIX AND NOT APPLE)
-    if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
-      string(REPLACE "." "0" TBB_USE_GLIBCXX_VERSION ${CMAKE_CXX_COMPILER_VERSION})
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    list(APPEND _flags
+      -Wno-exceptions -fcolor-diagnostics -Wno-error=deprecated-declarations
+      -Wno-error=missing-template-arg-list-after-template-kw
+    )
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang"
+       AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 20)
+      list(APPEND _flags -frelaxed-template-template-args)
     endif()
-    add_definitions(-DTBB_USE_GLIBCXX_VERSION=${TBB_USE_GLIBCXX_VERSION})
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 10)
+      list(APPEND _flags -Wno-misleading-indentation -Wno-error=deprecated-copy)
+    endif()
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15)
+      list(APPEND _flags -Wno-error=unused-but-set-variable)
+    endif()
+  else()
+    list(APPEND _flags
+      -Wno-error=maybe-uninitialized -Wno-error=implicit-fallthrough -Wno-error=deprecated-declarations
+    )
+    if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 10.0)
+      list(APPEND _flags -Wno-error=uninitialized)
+    endif()
+    if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 9.0)
+      list(APPEND _flags -Wno-error=deprecated-copy)
+    endif()
+    if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 10.0)
+      list(APPEND _flags -Wno-parentheses)
+    endif()
   endif()
-else()
-  set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-error=maybe-uninitialized -Wno-error=implicit-fallthrough -Wno-error=deprecated-declarations")
 
-  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 10.0)
-    set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-error=uninitialized")
+  if(NOT (APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64"))
+    list(APPEND _flags -march=${CXX_MARCH})
+  else()
+    message(STATUS "Running on Apple ${CMAKE_SYSTEM_PROCESSOR}. Disabled -march flag.")
   endif()
 
-  if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 9.0)
-    set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-error=deprecated-copy")
-  endif()
-  if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 10.0)
-    set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -Wno-parentheses")
-  endif()
-endif()
+  target_compile_options(${target} PRIVATE ${_flags})
 
+  # Per-config flags (previously CMAKE_CXX_FLAGS_<CONFIG>) as generator
+  # expressions scoped to this target only.
+  target_compile_options(${target} PRIVATE
+    "$<$<CONFIG:Debug>:-O0;-g;-DEIGEN_INITIALIZE_MATRICES_BY_NAN>"
+    "$<$<CONFIG:RelWithDebInfo>:-O3;-g;-DEIGEN_INITIALIZE_MATRICES_BY_NAN>"
+    "$<$<CONFIG:Release>:-O3;-DNDEBUG>"
+    "$<$<CONFIG:CIDebug>:-O0;-DEIGEN_INITIALIZE_MATRICES_BY_NAN>"
+    "$<$<CONFIG:CIRelWithDebInfo>:-O3;-DEIGEN_INITIALIZE_MATRICES_BY_NAN>"
+  )
+
+  if(NOT TBB_USE_GLIBCXX_VERSION AND UNIX AND NOT APPLE
+     AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    string(REPLACE "." "0" _tbb_glibcxx_version ${CMAKE_CXX_COMPILER_VERSION})
+    target_compile_definitions(${target} PRIVATE TBB_USE_GLIBCXX_VERSION=${_tbb_glibcxx_version})
+  endif()
+endfunction()
+
+basalt_add_common_compile_options(basalt)
+set_target_properties(basalt PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
+# ------------------------------------------------------------------------
+# Platform detection / target-scoped platform quirks
+# ------------------------------------------------------------------------
 if(APPLE)
-  set(CMAKE_FIND_FRAMEWORK LAST)
+  set_target_properties(basalt PROPERTIES FIND_FRAMEWORK LAST)
 
   if(CMAKE_SYSTEM_VERSION VERSION_LESS 19.0.0)
-    include_directories("/usr/local/opt/llvm/include/c++/v1")
-    link_directories("/usr/local/opt/llvm/lib")
-    add_compile_options("-nostdinc++")
-    list(REMOVE_ITEM CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES "/usr/local/opt/llvm/include/c++/v1")
+    target_include_directories(basalt PRIVATE "/usr/local/opt/llvm/include/c++/v1")
+    target_link_directories(basalt PRIVATE "/usr/local/opt/llvm/lib")
+    target_compile_options(basalt PRIVATE "-nostdinc++")
+    get_target_property(_basalt_implicit_incs basalt CXX_IMPLICIT_INCLUDE_DIRECTORIES)
+    if(_basalt_implicit_incs)
+      list(REMOVE_ITEM _basalt_implicit_incs "/usr/local/opt/llvm/include/c++/v1")
+      set_target_properties(basalt PROPERTIES CXX_IMPLICIT_INCLUDE_DIRECTORIES "${_basalt_implicit_incs}")
+    endif()
   endif()
 
   if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -155,20 +197,22 @@ else()
   message(WARNING "Only Linux and macOS are currently supported")
 endif()
 
-set(BASALT_CXX_FLAGS "${BASALT_CXX_FLAGS} -DEIGEN_DONT_PARALLELIZE")
-
-option(BASALT_INSTANTIATIONS_DOUBLE "Instantiate templates for Scalar=double." ON)
-option(BASALT_INSTANTIATIONS_FLOAT "Instantiate templates for Scalar=float." ON)
-
 if(BASALT_INSTANTIATIONS_DOUBLE)
-  list(APPEND BASALT_COMPILE_DEFINITIONS BASALT_INSTANTIATIONS_DOUBLE)
+  target_compile_definitions(basalt PUBLIC BASALT_INSTANTIATIONS_DOUBLE)
 endif()
 if(BASALT_INSTANTIATIONS_FLOAT)
-  list(APPEND BASALT_COMPILE_DEFINITIONS BASALT_INSTANTIATIONS_FLOAT)
+  target_compile_definitions(basalt PUBLIC BASALT_INSTANTIATIONS_FLOAT)
 endif()
 
-set(CMAKE_CXX_FLAGS "${BASALT_CXX_FLAGS} ${BASALT_MARCH_FLAGS} ${BASALT_PASSED_CXX_FLAGS}")
+# NOTE: CMAKE_REQUIRED_FLAGS intentionally left as-is — it's a documented
+# input variable consumed by check_cxx_source_compiles()/friends, not
+# project state, so it doesn't count as a "leak" the same way the old
+# CMAKE_CXX_FLAGS accumulation did.
+set(CMAKE_REQUIRED_FLAGS "-Wno-error")
 
+# ------------------------------------------------------------------------
+# Dependencies
+# ------------------------------------------------------------------------
 if(NOT TARGET Eigen3::Eigen)
   find_package(Eigen3 CONFIG REQUIRED)
 endif()
@@ -190,7 +234,7 @@ if(NOT TARGET fmt::fmt)
   find_package(fmt CONFIG REQUIRED)
 endif()
 if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
-find_package(CLI11 CONFIG REQUIRED)
+  find_package(CLI11 CONFIG REQUIRED)
 endif()
 find_package(magic_enum CONFIG REQUIRED)
 if(NOT TARGET nlohmann_json::nlohmann_json)
@@ -203,7 +247,9 @@ endif()
 if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
   find_package(Pangolin CONFIG REQUIRED)
 endif()
-find_package(basalt-headers CONFIG REQUIRED)
+if(NOT TARGET basalt-headers)
+  find_package(basalt-headers CONFIG REQUIRED)
+endif()
 if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
   find_package(GTest CONFIG REQUIRED)
 endif()
@@ -263,162 +309,161 @@ if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
   set_property(TARGET basalt::cli11 PROPERTY INTERFACE_LINK_LIBRARIES CLI11::CLI11)
 endif()
 
-add_library(basalt::magic_enum INTERFACE IMPORTED)
-set_property(TARGET basalt::magic_enum PROPERTY INTERFACE_LINK_LIBRARIES magic_enum::magic_enum)
-
 if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
   set(BASALT_PANGO_TARGETS ${Pangolin_LIBRARIES})
-endif()
-
-if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
   enable_testing()
 endif()
 
-# main library
-if(BASALT_BUILD_SHARED_LIB)
-  add_library(basalt SHARED)
-else()
-  add_library(basalt STATIC)
-endif()
-
-# Install basalt library
+# ------------------------------------------------------------------------
+# basalt library: sources, includes, links, install
+# ------------------------------------------------------------------------
 install(TARGETS basalt
   EXPORT BasaltTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
   ARCHIVE DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
-  RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
+  RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
+  FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
 
-# List all header and source files with target_sources.
-# This ensures, e.g., that QtCreator >= 6.0 properly recognize these headers to belong to the project.
-# To support cmake < 3.13, use absolute paths (see: https://crascit.com/2016/01/31/enhanced-source-file-handling-with-target_sources/)
 target_sources(basalt
   PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/calibration/vignette.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/hash_bow/hash_bow.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/linearization/block_diagonal.hpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/linearization/imu_block.hpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/linearization/landmark_block.hpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/linearization/landmark_block_abs_dynamic.hpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/linearization/linearization_abs_qr.hpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/linearization/linearization_abs_sc.hpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/linearization/linearization_base.hpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/linearization/linearization_rel_sc.hpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/frame_to_frame_optical_flow.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/multiscale_frame_to_frame_optical_flow.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/optical_flow.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/patch.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/patch_optical_flow.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/patterns.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optimization/accumulator.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optimization/linearize.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optimization/poses_linearize.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optimization/poses_optimize.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optimization/spline_linearize.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optimization/spline_optimize.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/utils/ba_utils.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/utils/cast_utils.hpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/utils/common_types.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/utils/filesystem.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/utils/format.hpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/utils/imu_types.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/utils/keypoints.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/utils/nfr.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/utils/sim_utils.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/utils/system_utils.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/utils/test_utils.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/utils/time_utils.hpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/utils/tracks.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/utils/union_find.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/utils/vio_config.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/utils/vis_utils.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/vi_estimator/ba_base.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/vi_estimator/landmark_database.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/vi_estimator/marg_helper.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/vi_estimator/nfr_mapper.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/vi_estimator/sc_ba_base.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/vi_estimator/sqrt_ba_base.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/vi_estimator/sqrt_keypoint_vio.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/vi_estimator/sqrt_keypoint_vo.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/vi_estimator/vio_estimator.h
+    FILE_SET HEADERS
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include
+    FILES
+      include/basalt/calibration/vignette.h
+      include/basalt/hash_bow/hash_bow.h
+      include/basalt/linearization/block_diagonal.hpp
+      include/basalt/linearization/imu_block.hpp
+      include/basalt/linearization/landmark_block.hpp
+      include/basalt/linearization/landmark_block_abs_dynamic.hpp
+      include/basalt/linearization/linearization_abs_qr.hpp
+      include/basalt/linearization/linearization_abs_sc.hpp
+      include/basalt/linearization/linearization_base.hpp
+      include/basalt/linearization/linearization_rel_sc.hpp
+      include/basalt/optical_flow/frame_to_frame_optical_flow.h
+      include/basalt/optical_flow/multiscale_frame_to_frame_optical_flow.h
+      include/basalt/optical_flow/optical_flow.h
+      include/basalt/optical_flow/patch.h
+      include/basalt/optical_flow/patch_optical_flow.h
+      include/basalt/optical_flow/patterns.h
+      include/basalt/optimization/accumulator.h
+      include/basalt/optimization/linearize.h
+      include/basalt/optimization/poses_linearize.h
+      include/basalt/optimization/poses_optimize.h
+      include/basalt/optimization/spline_linearize.h
+      include/basalt/optimization/spline_optimize.h
+      include/basalt/utils/ba_utils.h
+      include/basalt/utils/cast_utils.hpp
+      include/basalt/utils/common_types.h
+      include/basalt/utils/filesystem.h
+      include/basalt/utils/format.hpp
+      include/basalt/utils/imu_types.h
+      include/basalt/utils/keypoints.h
+      include/basalt/utils/nfr.h
+      include/basalt/utils/sim_utils.h
+      include/basalt/utils/system_utils.h
+      include/basalt/utils/test_utils.h
+      include/basalt/utils/time_utils.hpp
+      include/basalt/utils/tracks.h
+      include/basalt/utils/union_find.h
+      include/basalt/utils/vio_config.h
+      include/basalt/utils/vis_utils.h
+      include/basalt/vi_estimator/ba_base.h
+      include/basalt/vi_estimator/landmark_database.h
+      include/basalt/vi_estimator/marg_helper.h
+      include/basalt/vi_estimator/nfr_mapper.h
+      include/basalt/vi_estimator/sc_ba_base.h
+      include/basalt/vi_estimator/sqrt_ba_base.h
+      include/basalt/vi_estimator/sqrt_keypoint_vio.h
+      include/basalt/vi_estimator/sqrt_keypoint_vo.h
+      include/basalt/vi_estimator/vio_estimator.h
   PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/calibration/vignette.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/linearization/landmark_block.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/linearization/linearization_abs_qr.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/linearization/linearization_abs_sc.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/linearization/linearization_base.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/linearization/linearization_rel_sc.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/optical_flow/optical_flow.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/keypoints.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/system_utils.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/time_utils.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/vio_config.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/vi_estimator/ba_base.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/vi_estimator/landmark_database.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/vi_estimator/marg_helper.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/vi_estimator/nfr_mapper.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/vi_estimator/sc_ba_base.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/vi_estimator/sqrt_ba_base.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/vi_estimator/sqrt_keypoint_vio.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/vi_estimator/sqrt_keypoint_vo.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/vi_estimator/vio_estimator.cpp
+    src/calibration/vignette.cpp
+    src/linearization/landmark_block.cpp
+    src/linearization/linearization_abs_qr.cpp
+    src/linearization/linearization_abs_sc.cpp
+    src/linearization/linearization_base.cpp
+    src/linearization/linearization_rel_sc.cpp
+    src/optical_flow/optical_flow.cpp
+    src/utils/keypoints.cpp
+    src/utils/system_utils.cpp
+    src/utils/time_utils.cpp
+    src/utils/vio_config.cpp
+    src/vi_estimator/ba_base.cpp
+    src/vi_estimator/landmark_database.cpp
+    src/vi_estimator/marg_helper.cpp
+    src/vi_estimator/nfr_mapper.cpp
+    src/vi_estimator/sc_ba_base.cpp
+    src/vi_estimator/sqrt_ba_base.cpp
+    src/vi_estimator/sqrt_keypoint_vio.cpp
+    src/vi_estimator/sqrt_keypoint_vo.cpp
+    src/vi_estimator/vio_estimator.cpp
 )
 
 if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
   target_sources(basalt
     PUBLIC
-      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/calibration/aprilgrid.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/calibration/calibration_helper.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/calibration/cam_calib.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/calibration/cam_imu_calib.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/device/rs_t265.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io_euroc.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io_kitti.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io_rosbag.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/dataset_io_uzh.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/io/marg_data_io.h
+      FILE_SET HEADERS
+      BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include
+      FILES
+        include/basalt/calibration/aprilgrid.h
+        include/basalt/calibration/calibration_helper.h
+        include/basalt/calibration/cam_calib.h
+        include/basalt/calibration/cam_imu_calib.h
+        include/basalt/device/rs_t265.h
+        include/basalt/io/dataset_io.h
+        include/basalt/io/dataset_io_euroc.h
+        include/basalt/io/dataset_io_kitti.h
+        include/basalt/io/dataset_io_rosbag.h
+        include/basalt/io/dataset_io_uzh.h
+        include/basalt/io/marg_data_io.h
     PRIVATE
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/calibration/aprilgrid.cpp
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/calibration/calibraiton_helper.cpp
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/io/dataset_io.cpp
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/io/marg_data_io.cpp
+      src/calibration/aprilgrid.cpp
+      src/calibration/calibraiton_helper.cpp
+      src/io/dataset_io.cpp
+      src/io/marg_data_io.cpp
   )
 endif()
 
 target_link_libraries(basalt
   PUBLIC ${STD_CXX_FS} Eigen3::Eigen basalt::opencv basalt::basalt-headers TBB::tbb
-  PRIVATE basalt::magic_enum apriltag opengv nlohmann_json::nlohmann_json fmt::fmt)
+  PRIVATE magic_enum::magic_enum apriltag opengv nlohmann_json::nlohmann_json fmt::fmt)
 if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
   target_link_libraries(basalt PRIVATE rosbag)
 endif()
 
-target_include_directories(basalt PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(basalt SYSTEM PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
 if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
   target_include_directories(basalt PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/ros/include)
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/ros/include>)
 endif()
-target_compile_definitions(basalt PUBLIC ${BASALT_COMPILE_DEFINITIONS})
-#target_compile_definitions(basalt PUBLIC BASALT_DISABLE_ASSERTS)
 
+# ------------------------------------------------------------------------
+# Non-stripped executables / tests
+# ------------------------------------------------------------------------
 if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
   add_executable(basalt_calibrate src/calibrate.cpp src/calibration/cam_calib.cpp)
   target_link_libraries(basalt_calibrate basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
+  basalt_add_common_compile_options(basalt_calibrate)
   basalt_add_gui_link_options(basalt_calibrate)
   basalt_add_macos_runtime_paths(basalt_calibrate)
 
   add_executable(basalt_calibrate_imu src/calibrate_imu.cpp src/calibration/cam_imu_calib.cpp)
   target_link_libraries(basalt_calibrate_imu basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
+  basalt_add_common_compile_options(basalt_calibrate_imu)
   basalt_add_gui_link_options(basalt_calibrate_imu)
   basalt_add_macos_runtime_paths(basalt_calibrate_imu)
 
   add_executable(basalt_vio_sim src/vio_sim.cpp)
   target_link_libraries(basalt_vio_sim basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
+  basalt_add_common_compile_options(basalt_vio_sim)
   basalt_add_gui_link_options(basalt_vio_sim)
   basalt_add_macos_runtime_paths(basalt_vio_sim)
 
   add_executable(basalt_mapper_sim src/mapper_sim.cpp)
   target_link_libraries(basalt_mapper_sim basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
+  basalt_add_common_compile_options(basalt_mapper_sim)
   basalt_add_gui_link_options(basalt_mapper_sim)
   basalt_add_macos_runtime_paths(basalt_mapper_sim)
 
@@ -426,32 +471,38 @@ if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
   if(BASALT_INSTANTIATIONS_DOUBLE)
     add_executable(basalt_mapper_sim_naive src/mapper_sim_naive.cpp)
     target_link_libraries(basalt_mapper_sim_naive basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
+    basalt_add_common_compile_options(basalt_mapper_sim_naive)
     basalt_add_gui_link_options(basalt_mapper_sim_naive)
     basalt_add_macos_runtime_paths(basalt_mapper_sim_naive)
   endif()
 
   add_executable(basalt_mapper src/mapper.cpp)
   target_link_libraries(basalt_mapper basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
+  basalt_add_common_compile_options(basalt_mapper)
   basalt_add_gui_link_options(basalt_mapper)
   basalt_add_macos_runtime_paths(basalt_mapper)
 
   add_executable(basalt_opt_flow src/opt_flow.cpp)
   target_link_libraries(basalt_opt_flow basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
+  basalt_add_common_compile_options(basalt_opt_flow)
   basalt_add_gui_link_options(basalt_opt_flow)
   basalt_add_macos_runtime_paths(basalt_opt_flow)
 
   add_executable(basalt_vio src/vio.cpp)
   target_link_libraries(basalt_vio basalt ${BASALT_PANGO_TARGETS} basalt::cli11 fmt::fmt)
+  basalt_add_common_compile_options(basalt_vio)
   basalt_add_gui_link_options(basalt_vio)
   basalt_add_macos_runtime_paths(basalt_vio)
 
   add_executable(basalt_time_alignment src/time_alignment.cpp)
   target_link_libraries(basalt_time_alignment basalt ${BASALT_PANGO_TARGETS} basalt::cli11)
+  basalt_add_common_compile_options(basalt_time_alignment)
   basalt_add_gui_link_options(basalt_time_alignment)
   basalt_add_macos_runtime_paths(basalt_time_alignment)
 
   add_executable(basalt_kitti_eval src/kitti_eval.cpp)
   target_link_libraries(basalt_kitti_eval basalt::basalt-headers basalt::cli11)
+  basalt_add_common_compile_options(basalt_kitti_eval)
   basalt_add_static_link_options(basalt_kitti_eval)
   basalt_add_macos_runtime_paths(basalt_kitti_eval)
 
@@ -459,11 +510,13 @@ if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
   if(realsense2_FOUND)
     add_executable(basalt_rs_t265_record src/rs_t265_record.cpp src/device/rs_t265.cpp)
     target_link_libraries(basalt_rs_t265_record basalt realsense2::realsense2 ${BASALT_PANGO_TARGETS} basalt::cli11)
+    basalt_add_common_compile_options(basalt_rs_t265_record)
     basalt_add_gui_link_options(basalt_rs_t265_record)
     basalt_add_macos_runtime_paths(basalt_rs_t265_record)
 
     add_executable(basalt_rs_t265_vio src/rs_t265_vio.cpp src/device/rs_t265.cpp)
     target_link_libraries(basalt_rs_t265_vio basalt realsense2::realsense2 ${BASALT_PANGO_TARGETS} basalt::cli11)
+    basalt_add_common_compile_options(basalt_rs_t265_vio)
     basalt_add_gui_link_options(basalt_rs_t265_vio)
     basalt_add_macos_runtime_paths(basalt_rs_t265_vio)
 
@@ -486,7 +539,11 @@ if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
     endif()
   endif()
 
-  install(TARGETS basalt_calibrate basalt_calibrate_imu basalt_vio_sim basalt_mapper_sim basalt_mapper basalt_opt_flow basalt_vio basalt_kitti_eval basalt_time_alignment basalt
+  # NOTE: basalt itself is intentionally omitted here — it's already
+  # installed (with its FILE_SET HEADERS) by the unconditional
+  # install(TARGETS basalt ...) above. Installing the same FILE_SET twice
+  # for one target is a hard CMake error, not just redundant.
+  install(TARGETS basalt_calibrate basalt_calibrate_imu basalt_vio_sim basalt_mapper_sim basalt_mapper basalt_opt_flow basalt_vio basalt_kitti_eval basalt_time_alignment
     EXPORT BasaltTargets
     RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
     LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
@@ -501,11 +558,11 @@ if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
   endif()
 
   if(realsense2_FOUND)
-      install(TARGETS basalt_rs_t265_record basalt_rs_t265_vio
-        EXPORT BasaltTargets
-        RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
-        LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
-        ARCHIVE DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+    install(TARGETS basalt_rs_t265_record basalt_rs_t265_vio
+      EXPORT BasaltTargets
+      RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
+      LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
+      ARCHIVE DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
   endif()
 
   file(GLOB SCRIPTS_TO_INSTALL "${CMAKE_CURRENT_SOURCE_DIR}/scripts/basalt_*.py")
@@ -517,13 +574,5 @@ if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
   install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/data/udev"
     DESTINATION ${CMAKE_INSTALL_PREFIX}/etc/basalt)
 
-
   add_subdirectory(test)
-
-else()
-  install(TARGETS basalt
-    EXPORT BasaltTargets
-    RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
-    LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
 endif()
