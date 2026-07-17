@@ -14,8 +14,8 @@ include_directories(ethz_apriltag2/include)
 
 
 include_directories(../../include)
-include_directories(../basalt-headers/include)
-include_directories(../basalt-headers/thirdparty/Sophus)
+include_directories(../../../basalt-headers/include)
+include_directories(../../../Sophus)
 
 add_library(apriltag STATIC ${APRILTAG_SRCS} include/basalt/utils/apriltag.h src/apriltag.cpp)
 
