@@ -297,6 +297,22 @@ else()
   endforeach()
 endif()
 
+
+# fix for debian vs. ubuntu magic enum install path
+get_target_property(MAGIC_ENUM_INCLUDE_DIRS
+    magic_enum::magic_enum
+    INTERFACE_INCLUDE_DIRECTORIES
+)
+foreach(dir IN LISTS MAGIC_ENUM_INCLUDE_DIRS)
+    if(EXISTS "${dir}/magic_enum.hpp")
+        # Ubuntu layout
+        set(MAGIC_ENUM_ROOT "${dir}")
+    elseif(EXISTS "${dir}/magic_enum/magic_enum.hpp")
+        # Debian layout
+        set(MAGIC_ENUM_ROOT "${dir}/magic_enum")
+    endif()
+endforeach()
+
 add_library(basalt::opencv INTERFACE IMPORTED)
 set_property(TARGET basalt::opencv PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${OpenCV_INCLUDE_DIRS})
 set_property(TARGET basalt::opencv PROPERTY INTERFACE_LINK_LIBRARIES ${OpenCV_LIBS})
@@ -434,6 +450,12 @@ endif()
 target_include_directories(basalt SYSTEM PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
+if(MAGIC_ENUM_ROOT)
+    target_include_directories(basalt PRIVATE "${MAGIC_ENUM_ROOT}")
+else()
+    message(FATAL_ERROR "Cannot locate magic_enum headers")
+endif()
+
 if(NOT BASALT_COMPILE_CKAAR_STRIPPED)
   target_include_directories(basalt PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/ros/include>)
